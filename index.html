@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Tactical World Clash - Online</title>
-  <!-- Supabase JS Client via CDN -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
     :root {
@@ -17,10 +17,11 @@
       --success: #10b981;
     }
     * { box-sizing: border-box; font-family: 'Segoe UI', system-ui, sans-serif; }
+    
     body {
       background: var(--bg); color: #e2e8f0; margin: 0; padding: 15px;
-      display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 100vh;
-      overflow: hidden;
+      display: flex; flex-direction: column; align-items: center; min-height: 100vh;
+      overflow-x: hidden; /* Allows vertical scrolling on mobile */
     }
 
     /* LOBBY MODAL OVERLAY */
@@ -31,7 +32,7 @@
     }
     .lobby-card {
       background: var(--card-bg); border: 2px solid var(--border-color);
-      border-radius: 12px; padding: 32px; width: 380px; text-align: center;
+      border-radius: 12px; padding: 32px; width: 90%; max-width: 380px; text-align: center;
       box-shadow: 0 16px 40px rgba(0,0,0,0.8);
     }
     .lobby-btn {
@@ -42,15 +43,16 @@
     .lobby-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
     .room-header {
-      display: flex; gap: 15px; align-items: center; margin-bottom: 12px;
+      display: flex; gap: 15px; align-items: center; margin-bottom: 12px; width: 100%; max-width: 1240px;
       background: var(--card-bg); padding: 8px 18px; border-radius: 8px; border: 1px solid var(--border-color);
-      font-size: 13px;
+      font-size: 13px; justify-content: center; flex-wrap: wrap; text-align: center;
     }
 
     .game-viewport {
-      display: flex; width: 96vw; max-width: 1240px; height: 690px;
+      display: flex; width: 100%; max-width: 1240px; min-height: 690px;
       background: var(--card-bg); border: 2px solid var(--border-color);
       border-radius: 12px; overflow: hidden; box-shadow: 0 16px 40px rgba(0,0,0,0.7);
+      flex-direction: row;
     }
 
     /* LEFT: BATTLE PREVIEW */
@@ -69,7 +71,7 @@
     }
 
     .army-line {
-      display: flex; align-items: center; justify-content: center; gap: 12px;
+      display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap;
       min-height: 85px; margin: 8px 0;
     }
     .unit-wrapper {
@@ -99,8 +101,8 @@
       background: var(--enemy); color: var(--enemy);
       animation: flyDown 0.45s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
     }
-    @keyframes flyUp { 0% { transform: translateY(0); opacity: 1; } 100% { transform: translateY(-240px); opacity: 0.2; } }
-    @keyframes flyDown { 0% { transform: translateY(0); opacity: 1; } 100% { transform: translateY(240px); opacity: 0.2; } }
+    @keyframes flyUp { 0% { transform: translateY(0); opacity: 1; } 100% { transform: translateY(-260px); opacity: 0.2; } }
+    @keyframes flyDown { 0% { transform: translateY(0); opacity: 1; } 100% { transform: translateY(260px); opacity: 0.2; } }
 
     .unit-wrapper.destroyed { opacity: 0.35; filter: grayscale(100%) brightness(0.7); }
     .unit-wrapper.destroyed::after {
@@ -163,6 +165,7 @@
     .commit-box {
       background: #090c12; border: 1px solid var(--border-color); border-radius: 8px;
       padding: 12px; display: flex; flex-direction: column; gap: 8px; text-align: center;
+      margin-top: 15px;
     }
     .btn-lock {
       background: var(--success); border: 1px solid #059669; color: #fff;
@@ -172,6 +175,38 @@
     .btn-retreat {
       background: transparent; border: 1px solid #7f1d1d; color: var(--danger);
       padding: 8px; border-radius: 6px; font-size: 11px; cursor: pointer;
+    }
+
+    /* --- MOBILE RESPONSIVENESS --- */
+    @media (max-width: 768px) {
+      .game-viewport {
+        flex-direction: column;
+        min-height: auto;
+      }
+      .battle-preview {
+        flex: none;
+        height: 480px;
+        border-right: none;
+        border-bottom: 2px solid var(--border-color);
+        padding: 15px 10px;
+      }
+      .action-panel {
+        flex: none;
+        min-width: 100%;
+        padding: 15px;
+      }
+      .unit-wrapper {
+        width: 48px; height: 48px;
+      }
+      .unit-icon {
+        width: 32px; height: 32px;
+      }
+      .unit-wrapper.destroyed::after {
+        font-size: 40px;
+      }
+      .hud-title-bar, .unit-counter-pill {
+        font-size: 11px;
+      }
     }
   </style>
 </head>
@@ -285,8 +320,8 @@
   // ==========================================
   // CONFIG: SUPABASE CREDENTIALS
   // ==========================================
-  const SUPABASE_URL = 'https://hxcaxqrcwjtlqsdcocfa.supabase.co';
-  const SUPABASE_ANON_KEY = 'sb_publishable_SpOHCALE60b72XS2wfhFPg_VMGzB75L';
+  const SUPABASE_URL = 'https://YOUR_PROJECT_ID.supabase.co';
+  const SUPABASE_ANON_KEY = 'YOUR_JWT_ANON_KEY';
   // ==========================================
 
   const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
@@ -607,19 +642,30 @@
       const arena = document.getElementById('preview-arena').getBoundingClientRect();
       const proj = document.createElement('div');
       proj.className = `projectile ${isMovingUp ? 'proj-up' : 'proj-down'}`;
-      proj.style.left = `${(rect.left - arena.left) + 28}px`;
-      proj.style.top = `${(rect.top - arena.top) + (isMovingUp ? 10 : 35)}px`;
+      
+      // Calculate dynamic center so projectiles align perfectly on both desktop and mobile layouts
+      proj.style.left = `${(rect.left - arena.left) + (rect.width / 2) - 3}px`;
+      proj.style.top = `${(rect.top - arena.top) + (isMovingUp ? 10 : (rect.height - 20))}px`;
+      
       document.getElementById('preview-arena').appendChild(proj);
       setTimeout(() => proj.remove(), 450);
     }
   }
 
   async function initSupabase() {
+    // Generate/read dynamic room hash
+    let room = window.location.hash.substring(1);
+    if (!room) {
+      room = 'room-' + Math.floor(1000 + Math.random() * 9000);
+      window.location.hash = room;
+    }
+    document.getElementById('room-lbl').innerText = room;
+
     renderArmies();
     validatePips();
     updateOrderSummary();
 
-    channel = sbClient.channel('arena-alpha', { 
+    channel = sbClient.channel(room, { 
       config: { 
         broadcast: { ack: true }, 
         presence: { key: mySessionId } 
