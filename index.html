@@ -23,6 +23,24 @@
       overflow: hidden;
     }
 
+    /* LOBBY MODAL OVERLAY */
+    .lobby-backdrop {
+      position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+      background: rgba(6, 8, 14, 0.94); backdrop-filter: blur(8px);
+      z-index: 1000; display: flex; align-items: center; justify-content: center;
+    }
+    .lobby-card {
+      background: var(--card-bg); border: 2px solid var(--border-color);
+      border-radius: 12px; padding: 32px; width: 380px; text-align: center;
+      box-shadow: 0 16px 40px rgba(0,0,0,0.8);
+    }
+    .lobby-btn {
+      width: 100%; padding: 14px; margin-top: 14px; border-radius: 6px;
+      font-weight: bold; font-size: 15px; cursor: pointer; border: none;
+      transition: all 0.2s;
+    }
+    .lobby-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
     .room-header {
       display: flex; gap: 15px; align-items: center; margin-bottom: 12px;
       background: var(--card-bg); padding: 8px 18px; border-radius: 8px; border: 1px solid var(--border-color);
@@ -60,7 +78,6 @@
     }
     .unit-icon { width: 40px; height: 40px; fill: #64748b; transition: all 0.2s; }
 
-    /* Units Facing Each Other */
     .enemy-army .unit-icon { transform: rotate(180deg); }
     .my-army .unit-icon { transform: rotate(0deg); }
 
@@ -70,7 +87,6 @@
     }
     .unit-wrapper.readied .unit-icon { fill: #f8fafc; }
 
-    /* Dynamic Projectiles */
     .projectile {
       position: absolute; width: 6px; height: 16px; border-radius: 3px;
       z-index: 100; pointer-events: none; box-shadow: 0 0 8px currentColor;
@@ -86,7 +102,6 @@
     @keyframes flyUp { 0% { transform: translateY(0); opacity: 1; } 100% { transform: translateY(-240px); opacity: 0.2; } }
     @keyframes flyDown { 0% { transform: translateY(0); opacity: 1; } 100% { transform: translateY(240px); opacity: 0.2; } }
 
-    /* Permanent Destroyed Unit Styling */
     .unit-wrapper.destroyed { opacity: 0.35; filter: grayscale(100%) brightness(0.7); }
     .unit-wrapper.destroyed::after {
       content: '✕'; position: absolute; font-size: 52px; color: var(--danger);
@@ -95,7 +110,6 @@
     }
     @keyframes stampX { 0% { transform: scale(2.8); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
 
-    /* Center Stage */
     .center-stage {
       display: flex; flex-direction: column; align-items: center; justify-content: center;
       padding: 10px; background: #0c1017; border-radius: 8px;
@@ -163,6 +177,15 @@
 </head>
 <body>
 
+<!-- Lobby Overlay -->
+<div id="lobby-gate" class="lobby-backdrop">
+  <div class="lobby-card">
+    <h2 style="margin: 0 0 10px; color: var(--accent);">Tactical Clash</h2>
+    <p id="lobby-desc" style="font-size: 13px; color: #94a3b8; margin-bottom: 20px;">Connecting to battlefield...</p>
+    <button id="btn-claim-slot" class="lobby-btn" style="background: var(--accent); color: #06080e;" onclick="claimLobbySlot()" disabled>Checking...</button>
+  </div>
+</div>
+
 <div class="room-header">
   <span>Channel: <strong id="room-lbl">arena-alpha</strong></span>
   <span>Role: <strong id="role-lbl" style="color:var(--accent);">Connecting...</strong></span>
@@ -185,7 +208,7 @@
 
     <div class="center-stage">
       <div id="stage-title">Waiting for Opponent...</div>
-      <div id="stage-desc">Open this link in another tab or send it to a friend</div>
+      <div id="stage-desc">Waiting for Player 2 to join</div>
     </div>
 
     <div>
@@ -253,6 +276,7 @@
       <div id="selection-summary" style="font-size: 12px; color: #94a3b8;">Order: READY 1x TANKS</div>
       <button class="btn-lock" id="lock-btn" onclick="commitOrder()">CONFIRM & LOCK IN</button>
       <button class="btn-retreat" onclick="retreat()">Tactical Retreat</button>
+      <button class="btn-retreat" style="border-color: #38bdf8; color: #38bdf8;" onclick="requestReset()">Restart Match</button>
     </div>
   </div>
 </div>
@@ -262,10 +286,9 @@
   // CONFIG: SUPABASE CREDENTIALS
   // ==========================================
   const SUPABASE_URL = 'https://hxcaxqrcwjtlqsdcocfa.supabase.co';
-  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh4Y2F4cXJjd2p0bHFzZGNvY2ZhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg3NDgzNzEsImV4cCI6MjEwNDMyNDM3MX0.xRgM0KP_CznGHWexRvfcscMch_q3VBHXofhlLWOePWw';
+  const SUPABASE_ANON_KEY = 'sb_publishable_SpOHCALE60b72XS2wfhFPg_VMGzB75L';
   // ==========================================
 
-  // Avoid namespace collision with window.supabase from the CDN
   const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     realtime: {
       params: {
@@ -282,6 +305,9 @@
   let enemyRole = 'p2';
   let isLocked = false;
   let incomingOrders = { p1: null, p2: null };
+  
+  let assignedRole = null;
+  const mySessionId = 'usr-' + Math.random().toString(36).substring(7);
 
   const state = {
     round: 1,
@@ -432,6 +458,8 @@
     document.getElementById('lock-btn').disabled = true;
     document.getElementById('selection-summary').innerText = 'LOCKED IN [Secret Transmitted]';
 
+    incomingOrders[myRole] = currentOrder;
+
     if (channel) {
       channel.send({
         type: 'broadcast',
@@ -445,6 +473,46 @@
         payload: { player: myRole, order: currentOrder }
       });
     }
+
+    if (incomingOrders.p1 && incomingOrders.p2) {
+      resolveRound(incomingOrders.p1, incomingOrders.p2);
+      incomingOrders = { p1: null, p2: null };
+    }
+  }
+
+  function requestReset() {
+    if (channel) {
+      channel.send({
+        type: 'broadcast',
+        event: 'match_reset',
+        payload: { requestedBy: myRole }
+      });
+    }
+    executeReset();
+  }
+
+  function executeReset() {
+    state.round = 1;
+    state.p1 = { initial: { tanks: 6, planes: 4 }, reserves: { tanks: 6, planes: 4 }, readied: { tanks: 0, planes: 0 } };
+    state.p2 = { initial: { tanks: 6, planes: 4 }, reserves: { tanks: 6, planes: 4 }, readied: { tanks: 0, planes: 0 } };
+
+    isLocked = false;
+    incomingOrders = { p1: null, p2: null };
+    activeMode = 'READY';
+    selectedUnit = 'tanks';
+    selectedCount = 1;
+    currentOrder = { type: 'READY', unit: 'tanks', count: 1 };
+
+    document.getElementById('stage-title').innerText = 'Match Reset';
+    document.getElementById('stage-desc').innerText = 'Armies restored. Select orders to begin.';
+    document.getElementById('enemy-status-lbl').innerText = 'Choosing...';
+    document.getElementById('enemy-status-lbl').style.color = '#f59e0b';
+    document.getElementById('lock-btn').disabled = false;
+
+    renderArmies();
+    setMode('READY');
+    selectUnitType('tanks');
+    selectCount(1);
   }
 
   function retreat() {
@@ -481,12 +549,12 @@
       state.p2.readied[a2.unit] -= a2.count;
       if (a1.count > a2.count) {
         p2Dmg = a1.count - a2.count;
-        detail = `P1 firepower overpowered P2! P2 takes ${p2Dmg} damage.`;
+        detail = `P1 overpowered P2! P2 takes ${p2Dmg} hit(s).`;
       } else if (a2.count > a1.count) {
         p1Dmg = a2.count - a1.count;
-        detail = `P2 firepower overpowered P1! P1 takes ${p1Dmg} damage.`;
+        detail = `P2 overpowered P1! P1 takes ${p1Dmg} hit(s).`;
       } else {
-        detail = 'Equal firepower clash! All incoming rounds canceled out.';
+        detail = 'Equal clash! All fire canceled out.';
       }
     } else {
       if (a1.type === 'ATTACK') {
@@ -500,7 +568,7 @@
         else { p1Dmg = a2.count; detail += `P2 direct hit: P1 takes ${p1Dmg} damage! `; }
       }
       if (a1.type !== 'ATTACK' && a2.type !== 'ATTACK') {
-        detail = 'Both sides repositioned. No fire exchanged.';
+        detail = 'Both repositioned. No fire exchanged.';
       }
     }
 
@@ -514,7 +582,7 @@
       renderArmies();
       isLocked = false;
       state.round++;
-      document.getElementById('enemy-status-lbl').innerText = 'Selecting...';
+      document.getElementById('enemy-status-lbl').innerText = 'Choosing...';
       document.getElementById('enemy-status-lbl').style.color = '#f59e0b';
       validatePips();
       updateOrderSummary();
@@ -551,44 +619,60 @@
     validatePips();
     updateOrderSummary();
 
-    if (!sbClient) {
-      document.getElementById('stage-title').innerText = 'Supabase Client Missing';
-      document.getElementById('stage-desc').innerText = 'Check that your project keys are filled in index.html';
-      return;
-    }
-
     channel = sbClient.channel('arena-alpha', { 
       config: { 
         broadcast: { ack: true }, 
-        presence: { key: 'user-' + Math.random().toString(36).substring(7) } 
+        presence: { key: mySessionId } 
       } 
     });
 
     channel.on('presence', { event: 'sync' }, () => {
       const presenceState = channel.presenceState();
-      const allKeys = Object.keys(presenceState).sort();
-      const myPresenceKey = channel.presenceKey;
+      
+      const activeMembers = [];
+      Object.keys(presenceState).forEach(key => {
+        const records = presenceState[key];
+        if (records && records[0] && records[0].role) {
+          activeMembers.push({ id: key, role: records[0].role });
+        }
+      });
 
-      if (allKeys.length > 1) {
-        myRole = (allKeys[0] === myPresenceKey) ? 'p1' : 'p2';
-        enemyRole = myRole === 'p1' ? 'p2' : 'p1';
+      const p1Taken = activeMembers.some(m => m.role === 'p1');
+      const p2Taken = activeMembers.some(m => m.role === 'p2');
+
+      const gateBtn = document.getElementById('btn-claim-slot');
+      const gateDesc = document.getElementById('lobby-desc');
+
+      if (!assignedRole) {
+        if (!p1Taken) {
+          gateDesc.innerText = 'Slot available: Commander 1';
+          gateBtn.innerText = 'ENTER AS PLAYER 1';
+          gateBtn.disabled = false;
+          gateBtn.dataset.targetRole = 'p1';
+        } else if (!p2Taken) {
+          gateDesc.innerText = 'Player 1 is waiting. Take the second commander seat!';
+          gateBtn.innerText = 'ENTER AS PLAYER 2';
+          gateBtn.disabled = false;
+          gateBtn.dataset.targetRole = 'p2';
+        } else {
+          gateDesc.innerText = 'Match in progress. Maximum capacity reached (2/2).';
+          gateBtn.innerText = 'LOBBY FULL';
+          gateBtn.disabled = true;
+        }
+      } else {
+        const bothPresent = p1Taken && p2Taken;
+        document.getElementById('stage-title').innerText = bothPresent ? 'Battle Ready' : 'Waiting for Opponent';
+        document.getElementById('stage-desc').innerText = bothPresent ? 'Both commanders online. Queue orders.' : 'Waiting for Player 2 to join';
+        document.getElementById('enemy-status-lbl').innerText = bothPresent ? 'Choosing...' : 'Waiting...';
       }
-
-      document.getElementById('role-lbl').innerText = myRole.toUpperCase();
-      document.getElementById('stage-title').innerText = allKeys.length >= 2 ? 'Battle Ready' : 'Waiting for Opponent';
-      document.getElementById('stage-desc').innerText = allKeys.length >= 2 ? 'Both commanders online. Queue orders.' : 'Share link with Player 2';
-      document.getElementById('enemy-status-lbl').innerText = allKeys.length >= 2 ? 'Choosing...' : 'Waiting...';
-
-      renderArmies();
-      validatePips();
-      updateOrderSummary();
     });
 
     channel
       .on('broadcast', { event: 'player_locked' }, ({ payload }) => {
         if (payload.player === enemyRole) {
-          document.getElementById('enemy-status-lbl').innerText = 'LOCKED IN [Secret]';
-          document.getElementById('enemy-status-lbl').style.color = '#10b981';
+          const lbl = document.getElementById('enemy-status-lbl');
+          lbl.innerText = 'LOCKED IN [Secret]';
+          lbl.style.color = '#10b981';
         }
       })
       .on('broadcast', { event: 'submit_turn' }, ({ payload }) => {
@@ -598,17 +682,36 @@
           incomingOrders = { p1: null, p2: null };
         }
       })
+      .on('broadcast', { event: 'match_reset' }, ({ payload }) => {
+        executeReset();
+        document.getElementById('stage-desc').innerText = `${payload.requestedBy.toUpperCase()} initiated a restart. Ready for orders!`;
+      })
       .on('broadcast', { event: 'forfeit' }, ({ payload }) => {
         document.getElementById('stage-title').innerText = `${payload.player.toUpperCase()} RETREATED!`;
         document.getElementById('stage-desc').innerText = 'Territory conceded.';
         document.getElementById('lock-btn').disabled = true;
       });
 
-    await channel.subscribe(async (status) => {
-      if (status === 'SUBSCRIBED') {
-        await channel.track({ online_at: new Date().toISOString() });
-      }
-    });
+    await channel.subscribe();
+  }
+
+  async function claimLobbySlot() {
+    const gateBtn = document.getElementById('btn-claim-slot');
+    const roleToClaim = gateBtn.dataset.targetRole;
+    if (!roleToClaim) return;
+
+    assignedRole = roleToClaim;
+    myRole = roleToClaim;
+    enemyRole = myRole === 'p1' ? 'p2' : 'p1';
+
+    await channel.track({ role: assignedRole, joined_at: new Date().toISOString() });
+
+    document.getElementById('lobby-gate').style.display = 'none';
+    document.getElementById('role-lbl').innerText = myRole.toUpperCase();
+
+    renderArmies();
+    validatePips();
+    updateOrderSummary();
   }
 
   window.onload = initSupabase;
