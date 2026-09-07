@@ -21,7 +21,7 @@
     body {
       background: var(--bg); color: #e2e8f0; margin: 0; padding: 15px;
       display: flex; flex-direction: column; align-items: center; min-height: 100vh;
-      overflow-x: hidden; /* Allows vertical scrolling on mobile */
+      overflow-x: hidden;
     }
 
     /* LOBBY MODAL OVERLAY */
@@ -217,12 +217,12 @@
   <div class="lobby-card">
     <h2 style="margin: 0 0 10px; color: var(--accent);">Tactical Clash</h2>
     <p id="lobby-desc" style="font-size: 13px; color: #94a3b8; margin-bottom: 20px;">Connecting to battlefield...</p>
-    <button id="btn-claim-slot" class="lobby-btn" style="background: var(--accent); color: #06080e;" onclick="claimLobbySlot()" disabled>Checking...</button>
+    <button id="btn-claim-slot" class="lobby-btn" style="background: var(--accent); color: #06080e;" onclick="claimLobbySlot()" disabled>CHECKING...</button>
   </div>
 </div>
 
 <div class="room-header">
-  <span>Channel: <strong id="room-lbl">arena-alpha</strong></span>
+  <span>Channel: <strong id="room-lbl">Loading...</strong></span>
   <span>Role: <strong id="role-lbl" style="color:var(--accent);">Connecting...</strong></span>
   <span>Enemy Status: <strong id="enemy-status-lbl" style="color:var(--gold);">Waiting for player...</strong></span>
 </div>
@@ -643,7 +643,6 @@
       const proj = document.createElement('div');
       proj.className = `projectile ${isMovingUp ? 'proj-up' : 'proj-down'}`;
       
-      // Calculate dynamic center so projectiles align perfectly on both desktop and mobile layouts
       proj.style.left = `${(rect.left - arena.left) + (rect.width / 2) - 3}px`;
       proj.style.top = `${(rect.top - arena.top) + (isMovingUp ? 10 : (rect.height - 20))}px`;
       
@@ -653,7 +652,6 @@
   }
 
   async function initSupabase() {
-    // Generate/read dynamic room hash
     let room = window.location.hash.substring(1);
     if (!room) {
       room = 'room-' + Math.floor(1000 + Math.random() * 9000);
@@ -675,27 +673,31 @@
     channel.on('presence', { event: 'sync' }, () => {
       const presenceState = channel.presenceState();
       
-      const activeMembers = [];
-      Object.keys(presenceState).forEach(key => {
-        const records = presenceState[key];
-        if (records && records[0] && records[0].role) {
-          activeMembers.push({ id: key, role: records[0].role });
-        }
-      });
+      // Map all users and sort them chronologically by when they joined the room
+      const activeMembers = Object.keys(presenceState).map(key => {
+        const record = presenceState[key][0];
+        return { 
+          id: key, 
+          joined_at: record.joined_at ? new Date(record.joined_at).getTime() : Date.now() 
+        };
+      }).sort((a, b) => a.joined_at - b.joined_at);
 
-      const p1Taken = activeMembers.some(m => m.role === 'p1');
-      const p2Taken = activeMembers.some(m => m.role === 'p2');
+      // Find where my browser is in the chronological line
+      const myIndex = activeMembers.findIndex(m => m.id === mySessionId);
 
       const gateBtn = document.getElementById('btn-claim-slot');
       const gateDesc = document.getElementById('lobby-desc');
 
       if (!assignedRole) {
-        if (!p1Taken) {
-          gateDesc.innerText = 'Slot available: Commander 1';
+        if (myIndex === -1) {
+          gateBtn.innerText = 'CHECKING...';
+          gateBtn.disabled = true;
+        } else if (myIndex === 0) {
+          gateDesc.innerText = 'Slot assigned: Commander 1';
           gateBtn.innerText = 'ENTER AS PLAYER 1';
           gateBtn.disabled = false;
           gateBtn.dataset.targetRole = 'p1';
-        } else if (!p2Taken) {
+        } else if (myIndex === 1) {
           gateDesc.innerText = 'Player 1 is waiting. Take the second commander seat!';
           gateBtn.innerText = 'ENTER AS PLAYER 2';
           gateBtn.disabled = false;
@@ -706,7 +708,7 @@
           gateBtn.disabled = true;
         }
       } else {
-        const bothPresent = p1Taken && p2Taken;
+        const bothPresent = activeMembers.length >= 2;
         document.getElementById('stage-title').innerText = bothPresent ? 'Battle Ready' : 'Waiting for Opponent';
         document.getElementById('stage-desc').innerText = bothPresent ? 'Both commanders online. Queue orders.' : 'Waiting for Player 2 to join';
         document.getElementById('enemy-status-lbl').innerText = bothPresent ? 'Choosing...' : 'Waiting...';
@@ -738,10 +740,15 @@
         document.getElementById('lock-btn').disabled = true;
       });
 
-    await channel.subscribe();
+    await channel.subscribe(async (status) => {
+      if (status === 'SUBSCRIBED') {
+        // Track presence IMMEDIATELY to establish chronological order in the lobby
+        await channel.track({ joined_at: new Date().toISOString() });
+      }
+    });
   }
 
-  async function claimLobbySlot() {
+  function claimLobbySlot() {
     const gateBtn = document.getElementById('btn-claim-slot');
     const roleToClaim = gateBtn.dataset.targetRole;
     if (!roleToClaim) return;
@@ -750,14 +757,18 @@
     myRole = roleToClaim;
     enemyRole = myRole === 'p1' ? 'p2' : 'p1';
 
-    await channel.track({ role: assignedRole, joined_at: new Date().toISOString() });
-
     document.getElementById('lobby-gate').style.display = 'none';
     document.getElementById('role-lbl').innerText = myRole.toUpperCase();
 
     renderArmies();
     validatePips();
     updateOrderSummary();
+    
+    // Manually push a UI update immediately just in case the next sync is delayed
+    const bothPresent = Object.keys(channel.presenceState()).length >= 2;
+    document.getElementById('stage-title').innerText = bothPresent ? 'Battle Ready' : 'Waiting for Opponent';
+    document.getElementById('stage-desc').innerText = bothPresent ? 'Both commanders online. Queue orders.' : 'Waiting for Player 2 to join';
+    document.getElementById('enemy-status-lbl').innerText = bothPresent ? 'Choosing...' : 'Waiting...';
   }
 
   window.onload = initSupabase;
