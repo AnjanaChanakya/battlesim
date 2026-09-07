@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Tactical World Clash - Online (Supabase)</title>
+  <!-- Supabase JS Client via CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    :root {
+      --bg: #0a0d13;
+      --card-bg: #131720;
+      --border-color: #232936;
+      --accent: #38bdf8;
+      --enemy: #f43f5e;
+      --gold: #f59e0b;
+      --danger: #ef4444;
+      --success: #10b981;
+    }
+    * { box-sizing: border-box; font-family: 'Segoe UI', system-ui, sans-serif; }
+    body {
+      background: var(--bg); color: #e2e8f0; margin: 0; padding: 15px;
+      display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 100vh;
+    }
+
+    .room-header {
+      display: flex; gap: 15px; align-items: center; margin-bottom: 12px;
+      background: var(--card-bg); padding: 8px 18px; border-radius: 8px; border: 1px solid var(--border-color);
+      font-size: 13px;
+    }
+
+    .game-viewport {
+      display: flex; width: 96vw; max-width: 1240px; height: 690px;
+      background: var(--card-bg); border: 2px solid var(--border-color);
+      border-radius: 12px; overflow: hidden; box-shadow: 0 16px 40px rgba(0,0,0,0.7);
+    }
+
+    /* LEFT: BATTLE PREVIEW */
+    .battle-preview {
+      flex: 1.6; display: flex; flex-direction: column; justify-content: space-between;
+      padding: 20px; background: #06080e; border-right: 2px solid var(--border-color);
+      position: relative; overflow: hidden;
+    }
+    .hud-title-bar {
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 13px; font-weight: bold;
+    }
+    .unit-counter-pill {
+      background: #111622; padding: 4px 12px; border-radius: 6px;
+      border: 1px solid var(--border-color); font-size: 13px; display: flex; gap: 14px;
+    }
+
+    .army-line {
+      display: flex; align-items: center; justify-content: center; gap: 12px;
+      min-height: 85px; margin: 8px 0;
+    }
+    .unit-wrapper {
+      position: relative; width: 62px; height: 62px; display: flex;
+      align-items: center; justify-content: center; transition: all 0.2s ease;
+    }
+    .unit-icon { width: 40px; height: 40px; fill: #64748b; transition: all 0.2s; }
+
+    .enemy-army .unit-icon { transform: rotate(180deg); }
+    .my-army .unit-icon { transform: rotate(0deg); }
+
+    .unit-wrapper.readied {
+      border: 3px solid var(--gold); border-radius: 50%;
+      box-shadow: 0 0 12px rgba(245, 158, 11, 0.45);
+    }
+    .unit-wrapper.readied .unit-icon { fill: #f8fafc; }
+
+    /* Dynamic Projectiles */
+    .projectile {
+      position: absolute; width: 6px; height: 16px; border-radius: 3px;
+      z-index: 100; pointer-events: none; box-shadow: 0 0 8px currentColor;
+    }
+    .proj-up {
+      background: var(--accent); color: var(--accent);
+      animation: flyUp 0.45s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+    }
+    .proj-down {
+      background: var(--enemy); color: var(--enemy);
+      animation: flyDown 0.45s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+    }
+    @keyframes flyUp { 0% { transform: translateY(0); opacity: 1; } 100% { transform: translateY(-240px); opacity: 0.2; } }
+    @keyframes flyDown { 0% { transform: translateY(0); opacity: 1; } 100% { transform: translateY(240px); opacity: 0.2; } }
+
+    /* Destroyed Stamping */
+    .unit-wrapper.destroyed { opacity: 0.35; filter: grayscale(100%) brightness(0.7); }
+    .unit-wrapper.destroyed::after {
+      content: '✕'; position: absolute; font-size: 52px; color: var(--danger);
+      font-weight: 900; line-height: 1; text-shadow: 0 0 10px rgba(239, 68, 68, 0.9);
+      animation: stampX 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+    }
+    @keyframes stampX { 0% { transform: scale(2.8); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+
+    /* Center Stage */
+    .center-stage {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      padding: 10px; background: #0c1017; border-radius: 8px;
+      border: 1px dashed var(--border-color); text-align: center; min-height: 80px; z-index: 5;
+    }
+    #stage-title { font-size: 15px; font-weight: bold; color: var(--accent); }
+    #stage-desc { font-size: 12px; color: #94a3b8; margin-top: 4px; }
+
+    /* RIGHT: ACTION SELECT SCREEN */
+    .action-panel {
+      flex: 1.2; padding: 20px; display: flex; flex-direction: column;
+      justify-content: space-between; background: #0f131b; min-width: 380px;
+    }
+    .hud-step-title { font-size: 11px; text-transform: uppercase; font-weight: bold; color: #64748b; letter-spacing: 0.5px; margin-bottom: 6px; }
+    .symbol-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
+
+    .symbol-card {
+      background: #171d27; border: 1px solid var(--border-color); border-radius: 8px;
+      padding: 10px 6px; display: flex; flex-direction: column; align-items: center;
+      gap: 6px; cursor: pointer; transition: all 0.15s ease;
+    }
+    .symbol-card svg { width: 28px; height: 28px; fill: #94a3b8; }
+    .symbol-card span { font-size: 11px; font-weight: bold; color: #cbd5e1; }
+    .symbol-card:hover { background: #202735; border-color: #475569; }
+    .symbol-card.active { background: rgba(56, 189, 248, 0.15); border-color: var(--accent); }
+    .symbol-card.active svg { fill: var(--accent); }
+    .symbol-card.active span { color: #fff; }
+
+    .sub-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .sub-btn {
+      background: #19202c; border: 1px solid var(--border-color); border-radius: 8px;
+      padding: 10px; display: flex; align-items: center; justify-content: center; gap: 8px;
+      color: #cbd5e1; font-size: 13px; font-weight: bold; cursor: pointer; transition: all 0.15s;
+    }
+    .sub-btn svg { width: 22px; height: 22px; fill: #cbd5e1; }
+    .sub-btn:hover:not(:disabled) { background: #252e3e; border-color: var(--accent); color: #fff; }
+    .sub-btn:hover:not(:disabled) svg { fill: #fff; }
+    .sub-btn.selected { background: #0284c7; border-color: var(--accent); color: #fff; }
+    .sub-btn.selected svg { fill: #fff; }
+    .sub-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    .pip-container { display: flex; gap: 6px; margin-top: 8px; }
+    .pip-btn {
+      flex: 1; background: #161c27; border: 1px solid var(--border-color);
+      color: #cbd5e1; padding: 8px; border-radius: 6px; font-weight: bold; font-size: 13px;
+      cursor: pointer;
+    }
+    .pip-btn:hover:not(:disabled) { background: #222a3a; border-color: var(--accent); color: #fff; }
+    .pip-btn.selected { background: #0284c7; border-color: var(--accent); color: #fff; }
+    .pip-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+    .commit-box {
+      background: #090c12; border: 1px solid var(--border-color); border-radius: 8px;
+      padding: 12px; display: flex; flex-direction: column; gap: 8px; text-align: center;
+    }
+    .btn-lock {
+      background: var(--success); border: 1px solid #059669; color: #fff;
+      padding: 12px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 13px;
+    }
+    .btn-lock:hover:not(:disabled) { background: #059669; }
+    .btn-retreat {
+      background: transparent; border: 1px solid #7f1d1d; color: var(--danger);
+      padding: 8px; border-radius: 6px; font-size: 11px; cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+<div class="room-header">
+  <span>Channel: <strong id="room-lbl">arena-alpha</strong></span>
+  <span>Role: <strong id="role-lbl" style="color:var(--accent);">Assigning...</strong></span>
+  <span>Enemy Status: <strong id="enemy-status-lbl" style="color:var(--gold);">Waiting for player...</strong></span>
+</div>
+
+<div class="game-viewport">
+  <!-- LEFT: BATTLE PREVIEW -->
+  <div class="battle-preview" id="preview-arena">
+    <div>
+      <div class="hud-title-bar">
+        <span style="color: var(--enemy)">ENEMY BATTALION</span>
+        <div class="unit-counter-pill">
+          <span>Tanks: <strong id="enemy-res-tanks">6</strong></span>
+          <span>Planes: <strong id="enemy-res-planes">4</strong></span>
+        </div>
+      </div>
+      <div class="army-line enemy-army" id="enemy-field"></div>
+    </div>
+
+    <div class="center-stage">
+      <div id="stage-title">Connecting to Supabase...</div>
+      <div id="stage-desc">Connecting to real-time broadcast channel</div>
+    </div>
+
+    <div>
+      <div class="army-line my-army" id="my-field"></div>
+      <div class="hud-title-bar">
+        <span style="color: var(--accent)">YOUR BATTALION</span>
+        <div class="unit-counter-pill">
+          <span>Tanks: <strong id="my-res-tanks">6</strong></span>
+          <span>Planes: <strong id="my-res-planes">4</strong></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT: ACTION PANEL -->
+  <div class="action-panel">
+    <div>
+      <div style="font-size: 18px; font-weight: bold; border-bottom: 2px solid var(--border-color); padding-bottom: 10px;">
+        Combat Console
+      </div>
+
+      <div style="margin-top: 12px;">
+        <div class="hud-step-title">1. Order Type</div>
+        <div class="symbol-row">
+          <div class="symbol-card active" id="card-ready" onclick="setMode('READY')">
+            <svg viewBox="0 0 24 24"><path d="M7 14l5-5 5 5M7 19l5-5 5 5"/></svg>
+            <span>READY</span>
+          </div>
+          <div class="symbol-card" id="card-attack" onclick="setMode('ATTACK')">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="2"/><line x1="12" y1="2" x2="12" y2="7" stroke="currentColor" stroke-width="2"/><line x1="12" y1="17" x2="12" y2="22" stroke="currentColor" stroke-width="2"/><line x1="2" y1="12" x2="7" y2="12" stroke="currentColor" stroke-width="2"/><line x1="17" y1="12" x2="22" stroke="currentColor" stroke-width="2"/></svg>
+            <span>ATTACK</span>
+          </div>
+          <div class="symbol-card" id="card-defend" onclick="setMode('DEFEND')">
+            <svg viewBox="0 0 24 24"><path d="M12 2 L4 6 V12 C4 17.5 7.5 22 12 23 C16.5 22 20 17.5 20 12 V6 Z"/></svg>
+            <span>DEFEND</span>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="hud-step-title">2. Select Unit</div>
+        <div class="sub-grid">
+          <button class="sub-btn selected" id="sub-tank" onclick="selectUnitType('tanks')">
+            <svg viewBox="0 0 24 24"><rect x="3" y="10" width="18" height="10" rx="2"/><rect x="7" y="6" width="10" height="5" rx="1"/><rect x="11" y="2" width="2" height="6"/></svg>
+            <span>Tank</span>
+          </button>
+          <button class="sub-btn" id="sub-plane" onclick="selectUnitType('planes')">
+            <svg viewBox="0 0 24 24"><path d="M12 2 L2 18 L12 14 L22 18 Z"/></svg>
+            <span>Plane</span>
+          </button>
+        </div>
+      </div>
+
+      <div id="count-group" style="margin-top: 10px;">
+        <div class="hud-step-title">3. Volley Size</div>
+        <div class="pip-container">
+          <button class="pip-btn selected" id="pip-1" onclick="selectCount(1)">1x</button>
+          <button class="pip-btn" id="pip-2" onclick="selectCount(2)">2x</button>
+          <button class="pip-btn" id="pip-3" onclick="selectCount(3)">3x</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="commit-box">
+      <div id="selection-summary" style="font-size: 12px; color: #94a3b8;">Order: None</div>
+      <button class="btn-lock" id="lock-btn" onclick="commitOrder()" disabled>CONFIRM & LOCK IN</button>
+      <button class="btn-retreat" onclick="retreat()">Tactical Retreat</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ==========================================
+  // CONFIG: PASTE YOUR SUPABASE KEYS HERE
+  // ==========================================
+  const SUPABASE_URL = 'https://hxcaxqrcwjtlqsdcocfa.supabase.co/rest/v1/';
+  const SUPABASE_ANON_KEY = 'sb_publishable_SpOHCALE60b72XS2wfhFPg_VMGzB75L';
+  // ==========================================
+
+  const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const TANK_SVG = `<svg class="unit-icon" viewBox="0 0 24 24"><rect x="3" y="10" width="18" height="10" rx="2"/><rect x="7" y="6" width="10" height="5" rx="1"/><rect x="11" y="2" width="2" height="6"/></svg>`;
+  const PLANE_SVG = `<svg class="unit-icon" viewBox="0 0 24 24"><path d="M12 2 L2 18 L12 14 L22 18 Z"/></svg>`;
+
+  let channel;
+  let myRole = null;
+  let enemyRole = null;
+  let isLocked = false;
+  let incomingOrders = { p1: null, p2: null };
+
+  const state = {
+    round: 1,
+    p1: { initial: { tanks: 6, planes: 4 }, reserves: { tanks: 6, planes: 4 }, readied: { tanks: 0, planes: 0 } },
+    p2: { initial: { tanks: 6, planes: 4 }, reserves: { tanks: 6, planes: 4 }, readied: { tanks: 0, planes: 0 } }
+  };
+
+  let activeMode = 'READY';
+  let selectedUnit = 'tanks';
+  let selectedCount = 1;
+  let currentOrder = null;
+
+  async function initSupabase() {
+    channel = supabase.channel('arena-alpha', { config: { presence: { key: 'user' } } });
+
+    // Presence: Assign P1 or P2 automatically based on who entered first
+    channel.on('presence', { event: 'sync' }, () => {
+      const presenceState = channel.presenceState();
+      const users = Object.keys(presenceState);
+
+      if (!myRole) {
+        myRole = users.length <= 1 ? 'p1' : 'p2';
+        enemyRole = myRole === 'p1' ? 'p2' : 'p1';
+        document.getElementById('role-lbl').innerText = myRole.toUpperCase();
+        renderArmies();
+        validatePips();
+
+        if (users.length >= 2) {
+          document.getElementById('stage-title').innerText = 'Battle Ready';
+          document.getElementById('stage-desc').innerText = 'Both players connected. Queue your orders.';
+          document.getElementById('enemy-status-lbl').innerText = 'Selecting...';
+        }
+      }
+    });
+
+    // Real-time broadcast handlers
+    channel
+      .on('broadcast', { event: 'player_locked' }, ({ payload }) => {
+        if (payload.player === enemyRole) {
+          document.getElementById('enemy-status-lbl').innerText = 'LOCKED IN [Secret]';
+          document.getElementById('enemy-status-lbl').style.color = '#10b981';
+        }
+      })
+      .on('broadcast', { event: 'submit_turn' }, ({ payload }) => {
+        incomingOrders[payload.player] = payload.order;
+        if (incomingOrders.p1 && incomingOrders.p2) {
+          resolveRound(incomingOrders.p1, incomingOrders.p2);
+          incomingOrders = { p1: null, p2: null };
+        }
+      })
+      .on('broadcast', { event: 'forfeit' }, ({ payload }) => {
+        document.getElementById('stage-title').innerText = `${payload.player.toUpperCase()} RETREATED!`;
+        document.getElementById('stage-desc').innerText = 'Territory conceded.';
+        document.getElementById('lock-btn').disabled = true;
+      });
+
+    await channel.subscribe(async (status) => {
+      if (status === 'SUBSCRIBED') {
+        await channel.track({ online_at: new Date().toISOString() });
+      }
+    });
+  }
+
+  function renderArmies() {
+    if (!myRole) return;
+    const me = state[myRole];
+    const enemy = state[enemyRole];
+
+    const myContainer = document.getElementById('my-field');
+    const enemyContainer = document.getElementById('enemy-field');
+    myContainer.innerHTML = '';
+    enemyContainer.innerHTML = '';
+
+    for (let i = 0; i < me.initial.tanks; i++) {
+      const slot = document.createElement('div');
+      const isDead = i >= me.reserves.tanks;
+      slot.className = `unit-wrapper ${!isDead && i < me.readied.tanks ? 'readied' : ''} ${isDead ? 'destroyed' : ''}`;
+      slot.id = `my-tank-${i}`;
+      slot.innerHTML = TANK_SVG;
+      myContainer.appendChild(slot);
+    }
+    for (let i = 0; i < me.initial.planes; i++) {
+      const slot = document.createElement('div');
+      const isDead = i >= me.reserves.planes;
+      slot.className = `unit-wrapper ${!isDead && i < me.readied.planes ? 'readied' : ''} ${isDead ? 'destroyed' : ''}`;
+      slot.id = `my-plane-${i}`;
+      slot.innerHTML = PLANE_SVG;
+      myContainer.appendChild(slot);
+    }
+
+    for (let i = 0; i < enemy.initial.tanks; i++) {
+      const slot = document.createElement('div');
+      const isDead = i >= enemy.reserves.tanks;
+      slot.className = `unit-wrapper ${!isDead && i < enemy.readied.tanks ? 'readied' : ''} ${isDead ? 'destroyed' : ''}`;
+      slot.id = `enemy-tank-${i}`;
+      slot.innerHTML = TANK_SVG;
+      enemyContainer.appendChild(slot);
+    }
+    for (let i = 0; i < enemy.initial.planes; i++) {
+      const slot = document.createElement('div');
+      const isDead = i >= enemy.reserves.planes;
+      slot.className = `unit-wrapper ${!isDead && i < enemy.readied.planes ? 'readied' : ''} ${isDead ? 'destroyed' : ''}`;
+      slot.id = `enemy-plane-${i}`;
+      slot.innerHTML = PLANE_SVG;
+      enemyContainer.appendChild(slot);
+    }
+
+    document.getElementById('my-res-tanks').innerText = me.reserves.tanks;
+    document.getElementById('my-res-planes').innerText = me.reserves.planes;
+    document.getElementById('enemy-res-tanks').innerText = enemy.reserves.tanks;
+    document.getElementById('enemy-res-planes').innerText = enemy.reserves.planes;
+  }
+
+  function setMode(mode) {
+    if (isLocked) return;
+    activeMode = mode;
+    ['ready', 'attack', 'defend'].forEach(m => {
+      document.getElementById(`card-${m}`).classList.toggle('active', m === mode.toLowerCase());
+    });
+
+    const cg = document.getElementById('count-group');
+    if (mode === 'DEFEND') {
+      cg.style.display = 'none';
+      selectedCount = 0;
+    } else {
+      cg.style.display = 'block';
+      if (selectedCount === 0) selectedCount = 1;
+    }
+
+    validatePips();
+    updateOrderSummary();
+  }
+
+  function selectUnitType(unit) {
+    if (isLocked) return;
+    selectedUnit = unit;
+    document.getElementById('sub-tank').classList.toggle('selected', unit === 'tanks');
+    document.getElementById('sub-plane').classList.toggle('selected', unit === 'planes');
+    validatePips();
+    updateOrderSummary();
+  }
+
+  function selectCount(n) {
+    if (isLocked) return;
+    selectedCount = n;
+    [1, 2, 3].forEach(c => {
+      const btn = document.getElementById(`pip-${c}`);
+      if (btn) btn.classList.toggle('selected', c === n);
+    });
+    updateOrderSummary();
+  }
+
+  function validatePips() {
+    if (!myRole) return;
+    const me = state[myRole];
+    const pip3 = document.getElementById('pip-3');
+    pip3.style.display = selectedUnit === 'planes' ? 'none' : 'block';
+
+    let maxAllowed = 0;
+    if (activeMode === 'READY') {
+      const idle = me.reserves[selectedUnit] - me.readied[selectedUnit];
+      maxAllowed = Math.min(selectedUnit === 'tanks' ? 3 : 2, idle);
+    } else if (activeMode === 'ATTACK') {
+      maxAllowed = Math.min(selectedUnit === 'tanks' ? 3 : 2, me.readied[selectedUnit]);
+    }
+
+    [1, 2, 3].forEach(c => {
+      const btn = document.getElementById(`pip-${c}`);
+      if (btn) btn.disabled = c > maxAllowed;
+    });
+
+    if (selectedCount > maxAllowed) selectedCount = maxAllowed > 0 ? maxAllowed : 1;
+  }
+
+  function updateOrderSummary() {
+    if (!myRole || isLocked) return;
+    const me = state[myRole];
+    let valid = true;
+
+    if (activeMode === 'READY') {
+      const idle = me.reserves[selectedUnit] - me.readied[selectedUnit];
+      valid = selectedCount > 0 && selectedCount <= idle;
+    } else if (activeMode === 'ATTACK') {
+      valid = selectedCount > 0 && selectedCount <= me.readied[selectedUnit];
+    }
+
+    if (valid) {
+      currentOrder = { type: activeMode, unit: selectedUnit, count: selectedCount };
+      document.getElementById('selection-summary').innerText = `Order: ${activeMode} ${selectedCount > 0 ? selectedCount + 'x ' : ''}${selectedUnit.toUpperCase()}`;
+      document.getElementById('lock-btn').disabled = false;
+    } else {
+      currentOrder = null;
+      document.getElementById('selection-summary').innerText = 'Order: Invalid / Incomplete';
+      document.getElementById('lock-btn').disabled = true;
+    }
+  }
+
+  function commitOrder() {
+    if (!currentOrder || isLocked) return;
+    isLocked = true;
+    document.getElementById('lock-btn').disabled = true;
+    document.getElementById('selection-summary').innerText = 'LOCKED IN [Transmitted]';
+
+    // Broadcast that you are locked (without revealing action payload)
+    channel.send({
+      type: 'broadcast',
+      event: 'player_locked',
+      payload: { player: myRole }
+    });
+
+    // Send the actual order payload for simultaneous resolution
+    channel.send({
+      type: 'broadcast',
+      event: 'submit_turn',
+      payload: { player: myRole, order: currentOrder }
+    });
+  }
+
+  function retreat() {
+    channel.send({
+      type: 'broadcast',
+      event: 'forfeit',
+      payload: { player: myRole }
+    });
+  }
+
+  function resolveRound(a1, a2) {
+    // 1. Ready Up
+    ['p1', 'p2'].forEach(pk => {
+      const act = pk === 'p1' ? a1 : a2;
+      if (act.type === 'READY') {
+        const idle = state[pk].reserves[act.unit] - state[pk].readied[act.unit];
+        state[pk].readied[act.unit] += Math.min(act.count, idle);
+      }
+    });
+
+    const myOrder = myRole === 'p1' ? a1 : a2;
+    const enemyOrder = myRole === 'p1' ? a2 : a1;
+
+    // Tracers
+    if (myOrder.type === 'ATTACK') spawnTracers('my', myOrder.count, myOrder.unit, true);
+    if (enemyOrder.type === 'ATTACK') spawnTracers('enemy', enemyOrder.count, enemyOrder.unit, false);
+
+    // Combat Math
+    let p1Dmg = 0;
+    let p2Dmg = 0;
+    let detail = '';
+
+    if (a1.type === 'ATTACK' && a2.type === 'ATTACK') {
+      state.p1.readied[a1.unit] -= a1.count;
+      state.p2.readied[a2.unit] -= a2.count;
+      if (a1.count > a2.count) {
+        p2Dmg = a1.count - a2.count;
+        detail = `P1 firepower overpowered P2! P2 takes ${p2Dmg} hit(s).`;
+      } else if (a2.count > a1.count) {
+        p1Dmg = a2.count - a1.count;
+        detail = `P2 firepower overpowered P1! P1 takes ${p1Dmg} hit(s).`;
+      } else {
+        detail = 'Equal firepower clash! All incoming rounds canceled out.';
+      }
+    } else {
+      if (a1.type === 'ATTACK') {
+        state.p1.readied[a1.unit] -= a1.count;
+        if (a2.type === 'DEFEND' && a2.unit === a1.unit) detail += `P2 shield negated P1's ${a1.unit}! `;
+        else { p2Dmg = a1.count; detail += `P1 direct hit: P2 takes ${p2Dmg} damage! `; }
+      }
+      if (a2.type === 'ATTACK') {
+        state.p2.readied[a2.unit] -= a2.count;
+        if (a1.type === 'DEFEND' && a1.unit === a2.unit) detail += `P1 shield negated P2's ${a2.unit}! `;
+        else { p1Dmg = a2.count; detail += `P2 direct hit: P1 takes ${p1Dmg} damage! `; }
+      }
+      if (a1.type !== 'ATTACK' && a2.type !== 'ATTACK') {
+        detail = 'Both sides repositioned. No fire exchanged.';
+      }
+    }
+
+    applyCasualties('p1', p1Dmg);
+    applyCasualties('p2', p2Dmg);
+
+    document.getElementById('stage-title').innerText = `Round ${state.round} Outcome`;
+    document.getElementById('stage-desc').innerText = detail;
+
+    setTimeout(() => {
+      renderArmies();
+      isLocked = false;
+      state.round++;
+      document.getElementById('enemy-status-lbl').innerText = 'Selecting...';
+      document.getElementById('enemy-status-lbl').style.color = '#f59e0b';
+      validatePips();
+      updateOrderSummary();
+    }, 700);
+  }
+
+  function applyCasualties(pk, count) {
+    const p = state[pk];
+    for (let i = 0; i < count; i++) {
+      if (p.reserves.tanks === 0 && p.reserves.planes === 0) break;
+      const target = (p.reserves.tanks >= p.reserves.planes && p.reserves.tanks > 0) ? 'tanks' : 'planes';
+      p.reserves[target]--;
+      if (p.readied[target] > p.reserves[target]) p.readied[target] = p.reserves[target];
+    }
+  }
+
+  function spawnTracers(prefix, count, unit, isMovingUp) {
+    for (let i = 0; i < count; i++) {
+      const slot = document.getElementById(`${prefix}-${unit === 'tanks' ? 'tank' : 'plane'}-${i}`);
+      if (!slot) continue;
+      const rect = slot.getBoundingClientRect();
+      const arena = document.getElementById('preview-arena').getBoundingClientRect();
+      const proj = document.createElement('div');
+      proj.className = `projectile ${isMovingUp ? 'proj-up' : 'proj-down'}`;
+      proj.style.left = `${(rect.left - arena.left) + 28}px`;
+      proj.style.top = `${(rect.top - arena.top) + (isMovingUp ? 10 : 35)}px`;
+      document.getElementById('preview-arena').appendChild(proj);
+      setTimeout(() => proj.remove(), 450);
+    }
+  }
+
+  window.onload = initSupabase;
+</script>
+
+</body>
+</html>
