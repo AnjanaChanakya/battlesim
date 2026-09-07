@@ -673,31 +673,50 @@
     channel.on('presence', { event: 'sync' }, () => {
       const presenceState = channel.presenceState();
       
-      // Map all users and sort them chronologically by when they joined the room
-      const activeMembers = Object.keys(presenceState).map(key => {
-        const record = presenceState[key][0];
-        return { 
-          id: key, 
-          joined_at: record.joined_at ? new Date(record.joined_at).getTime() : Date.now() 
-        };
-      }).sort((a, b) => a.joined_at - b.joined_at);
+      let p1Taken = false;
+      let p2Taken = false;
+      let enemyPresent = false;
 
-      // Find where my browser is in the chronological line
-      const myIndex = activeMembers.findIndex(m => m.id === mySessionId);
+      // Scan the room for claimed roles
+      Object.keys(presenceState).forEach(key => {
+        if (key !== mySessionId) {
+          const record = presenceState[key][0];
+          if (record && record.role === 'p1') p1Taken = true;
+          if (record && record.role === 'p2') p2Taken = true;
+          if (record && record.role) enemyPresent = true;
+        }
+      });
+
+      // Handle rare case where two people click the same slot at the exact same millisecond
+      if (assignedRole) {
+        Object.keys(presenceState).forEach(key => {
+          if (key !== mySessionId) {
+            const record = presenceState[key][0];
+            if (record && record.role === assignedRole) {
+              // Tie-breaker: Whichever session ID is alphabetically lower concedes the role
+              if (mySessionId > key) {
+                assignedRole = assignedRole === 'p1' ? 'p2' : 'p1';
+                myRole = assignedRole;
+                enemyRole = myRole === 'p1' ? 'p2' : 'p1';
+                document.getElementById('role-lbl').innerText = myRole.toUpperCase();
+                channel.track({ role: assignedRole });
+              }
+            }
+          }
+        });
+      }
 
       const gateBtn = document.getElementById('btn-claim-slot');
       const gateDesc = document.getElementById('lobby-desc');
 
       if (!assignedRole) {
-        if (myIndex === -1) {
-          gateBtn.innerText = 'CHECKING...';
-          gateBtn.disabled = true;
-        } else if (myIndex === 0) {
-          gateDesc.innerText = 'Slot assigned: Commander 1';
+        // Player is still in the lobby screen
+        if (!p1Taken) {
+          gateDesc.innerText = 'Slot available: Commander 1';
           gateBtn.innerText = 'ENTER AS PLAYER 1';
           gateBtn.disabled = false;
           gateBtn.dataset.targetRole = 'p1';
-        } else if (myIndex === 1) {
+        } else if (!p2Taken) {
           gateDesc.innerText = 'Player 1 is waiting. Take the second commander seat!';
           gateBtn.innerText = 'ENTER AS PLAYER 2';
           gateBtn.disabled = false;
@@ -708,10 +727,10 @@
           gateBtn.disabled = true;
         }
       } else {
-        const bothPresent = activeMembers.length >= 2;
-        document.getElementById('stage-title').innerText = bothPresent ? 'Battle Ready' : 'Waiting for Opponent';
-        document.getElementById('stage-desc').innerText = bothPresent ? 'Both commanders online. Queue orders.' : 'Waiting for Player 2 to join';
-        document.getElementById('enemy-status-lbl').innerText = bothPresent ? 'Choosing...' : 'Waiting...';
+        // Player is already in the game
+        document.getElementById('stage-title').innerText = enemyPresent ? 'Battle Ready' : 'Waiting for Opponent';
+        document.getElementById('stage-desc').innerText = enemyPresent ? 'Both commanders online. Queue orders.' : 'Waiting for Player 2 to join';
+        document.getElementById('enemy-status-lbl').innerText = enemyPresent ? 'Choosing...' : 'Waiting...';
       }
     });
 
@@ -742,20 +761,26 @@
 
     await channel.subscribe(async (status) => {
       if (status === 'SUBSCRIBED') {
-        // Track presence IMMEDIATELY to establish chronological order in the lobby
-        await channel.track({ joined_at: new Date().toISOString() });
+        // Broadcast presence silently to the room so others know we are in the lobby
+        await channel.track({ status: 'observing' });
       }
     });
   }
 
-  function claimLobbySlot() {
+  async function claimLobbySlot() {
     const gateBtn = document.getElementById('btn-claim-slot');
     const roleToClaim = gateBtn.dataset.targetRole;
     if (!roleToClaim) return;
 
+    gateBtn.innerText = 'JOINING...';
+    gateBtn.disabled = true;
+
     assignedRole = roleToClaim;
     myRole = roleToClaim;
     enemyRole = myRole === 'p1' ? 'p2' : 'p1';
+
+    // Announce to the room that this specific role has been locked down
+    await channel.track({ role: assignedRole });
 
     document.getElementById('lobby-gate').style.display = 'none';
     document.getElementById('role-lbl').innerText = myRole.toUpperCase();
@@ -763,12 +788,6 @@
     renderArmies();
     validatePips();
     updateOrderSummary();
-    
-    // Manually push a UI update immediately just in case the next sync is delayed
-    const bothPresent = Object.keys(channel.presenceState()).length >= 2;
-    document.getElementById('stage-title').innerText = bothPresent ? 'Battle Ready' : 'Waiting for Opponent';
-    document.getElementById('stage-desc').innerText = bothPresent ? 'Both commanders online. Queue orders.' : 'Waiting for Player 2 to join';
-    document.getElementById('enemy-status-lbl').innerText = bothPresent ? 'Choosing...' : 'Waiting...';
   }
 
   window.onload = initSupabase;
